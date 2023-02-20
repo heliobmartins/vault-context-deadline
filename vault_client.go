@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/hashicorp/vault/api"
 	"github.com/pkg/errors"
+	"log"
 	"net/url"
 )
 

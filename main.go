@@ -33,14 +33,15 @@ func main() {
 }
 
 type Factory struct {
-	Version            string
-	VaultClientFactory VaultClientFactory
-	VaultSysLink       *VaultSysLink
+	Version string
 }
 
 type AuthBackend struct {
 	*framework.Backend
-	version string
+	version            string
+	conf               *logical.BackendConfig
+	VaultClientFactory VaultClientFactory
+	VaultSysLink       *VaultSysLink
 }
 
 const PathLoginSlauthToken = "login/slauthtoken" //#nosec
@@ -108,32 +109,38 @@ func (b *AuthBackend) pathAuthRenew(ctx context.Context, req *logical.Request, d
 	return framework.LeaseExtend(30*time.Second, 60*time.Minute, b.System())(ctx, req, d)
 }
 
-func (h *Factory) Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	b := &AuthBackend{
-		version: h.Version,
+func (b *AuthBackend) init(ctx context.Context, req *logical.InitializationRequest) error {
+
+	if b.conf.Logger == nil {
+		b.conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.LevelFromString(b.conf.Config["log_level"])})
 	}
 
-	b.Backend = &framework.Backend{
-		BackendType:  logical.TypeCredential,
-		PathsSpecial: b.pathsSpecial(),
-		Paths:        b.backendPaths(),
-	}
-
-	if conf.Logger == nil {
-		conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.LevelFromString(conf.Config["log_level"])})
-	}
-
-	clientFactory := h.VaultClientFactory
+	clientFactory := b.VaultClientFactory
 	if clientFactory == nil {
 		clientFactory = DefaultClientFactory
 	}
 
-	if h.VaultSysLink == nil {
-		sysLink, err := NewVaultSysLink(ctx, conf, clientFactory)
+	if b.VaultSysLink == nil {
+		sysLink, err := NewVaultSysLink(ctx, b.conf, clientFactory)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to obtain sys link to vault backend")
+			return errors.Wrapf(err, "failed to obtain sys link to vault backend")
 		}
-		h.VaultSysLink = sysLink
+		b.VaultSysLink = sysLink
+	}
+	return nil
+}
+
+func (h *Factory) Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
+	b := &AuthBackend{
+		version: h.Version,
+		conf:    conf,
+	}
+
+	b.Backend = &framework.Backend{
+		BackendType:    logical.TypeCredential,
+		PathsSpecial:   b.pathsSpecial(),
+		Paths:          b.backendPaths(),
+		InitializeFunc: b.init,
 	}
 
 	return b, nil
