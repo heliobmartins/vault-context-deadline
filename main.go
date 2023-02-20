@@ -120,13 +120,18 @@ func (b *AuthBackend) init(ctx context.Context, req *logical.InitializationReque
 		clientFactory = DefaultClientFactory
 	}
 
-	if b.VaultSysLink == nil {
-		sysLink, err := NewVaultSysLink(ctx, b.conf, clientFactory)
-		if err != nil {
-			return errors.Wrapf(err, "failed to obtain sys link to vault backend")
+	go func() {
+		time.Sleep(3 * time.Second)
+		newContext := context.Background()
+		if b.VaultSysLink == nil {
+			sysLink, err := NewVaultSysLink(newContext, b.conf, clientFactory)
+			if err != nil {
+				log.Println(err, "failed to obtain sys link to vault backend")
+			}
+			b.VaultSysLink = sysLink
 		}
-		b.VaultSysLink = sysLink
-	}
+	}()
+
 	return nil
 }
 
