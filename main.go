@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/vault/api"
@@ -42,6 +43,7 @@ type AuthBackend struct {
 	conf               *logical.BackendConfig
 	VaultClientFactory VaultClientFactory
 	VaultSysLink       *VaultSysLink
+	initOnce           sync.Once
 }
 
 const PathLoginSlauthToken = "login/slauthtoken" //#nosec
@@ -109,7 +111,17 @@ func (b *AuthBackend) pathAuthRenew(ctx context.Context, req *logical.Request, d
 	return framework.LeaseExtend(30*time.Second, 60*time.Minute, b.System())(ctx, req, d)
 }
 
-func (b *AuthBackend) init(ctx context.Context, req *logical.InitializationRequest) error {
+func (h *Factory) Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
+	b := &AuthBackend{
+		version: h.Version,
+		conf:    conf,
+	}
+
+	b.Backend = &framework.Backend{
+		BackendType:  logical.TypeCredential,
+		PathsSpecial: b.pathsSpecial(),
+		Paths:        b.backendPaths(),
+	}
 
 	if b.conf.Logger == nil {
 		b.conf.Logger = hclog.New(&hclog.LoggerOptions{Level: hclog.LevelFromString(b.conf.Config["log_level"])})
@@ -120,28 +132,15 @@ func (b *AuthBackend) init(ctx context.Context, req *logical.InitializationReque
 		clientFactory = DefaultClientFactory
 	}
 
-	if b.VaultSysLink == nil {
-		sysLink, err := NewVaultSysLink(ctx, b.conf, clientFactory)
-		if err != nil {
-			return errors.Wrapf(err, "failed to obtain sys link to vault backend")
+	b.initOnce.Do(func() {
+		if b.VaultSysLink == nil {
+			sysLink, err := NewVaultSysLink(ctx, b.conf, clientFactory)
+			if err != nil {
+				log.Println(err, "failed to obtain sys link to vault backend") //TODO: How do I return error instead?
+			}
+			b.VaultSysLink = sysLink
 		}
-		b.VaultSysLink = sysLink
-	}
-	return nil
-}
-
-func (h *Factory) Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	b := &AuthBackend{
-		version: h.Version,
-		conf:    conf,
-	}
-
-	b.Backend = &framework.Backend{
-		BackendType:    logical.TypeCredential,
-		PathsSpecial:   b.pathsSpecial(),
-		Paths:          b.backendPaths(),
-		InitializeFunc: b.init,
-	}
+	})
 
 	return b, nil
 }
